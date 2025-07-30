@@ -4,7 +4,7 @@ function doGet(e) {
     const sheetName = ""
     const startTime = new Date().getTime();
     let apiKey;
-    if(!e) { //Test API Key
+    if(!e) {
       apiKey = 'test';
     }
     else {
@@ -16,47 +16,14 @@ function doGet(e) {
       })).setMimeType(ContentService.MimeType.JSON);
     }
 
-    // // Try cache first
-    const cache = CacheService.getScriptCache();
-    const cacheKey = 'customer_data_v1';
-    let cachedData = cache.get(cacheKey);
-    
     let data;
-    let cacheStatus;
     
-    if (cachedData) {
-      // Cache HIT
-      console.log("CACHE HIT - Using cached data");
-      cacheStatus = "HIT";
-      try {
-        data = JSON.parse(cachedData);
-      } catch (e) {
-        console.log("Cache corrupted, clearing and fetching fresh");
-        cache.remove(cacheKey);
-        cachedData = null;
-        cacheStatus = "CORRUPTED";
-      }
-    }
-    
-    if (!cachedData) {
-      // Cache MISS - read from sheet
-      console.log("CACHE MISS - Reading from sheet");
-      cacheStatus = cacheStatus === "CORRUPTED" ? "CORRUPTED" : "MISS";
     console.log(`time to load: ${new Date().getTime() - startTime}`);
     const sheet = SpreadsheetApp.openById(sheetID).getSheetByName(sheetName);
-    data = sheet.getDataRange().getValues();
-      
-    //   // Store in cache for 50 minutes
-      try {
-        cache.put(cacheKey, JSON.stringify(data), 3000);
-        console.log("Data cached for 50 minutes");
-      } catch (e) {
-        console.log("Cache storage failed:", e.toString());
-      }
-    }
-
-    const headers = data[0];
-    const rows = data.slice(1);
+    
+    const lastCol = sheet.getLastColumn();
+    const headers = sheet.getRange(1,1,1,lastCol).getValues().flat();
+    console.log(headers);
     console.log(`time to look at sheet: ${new Date().getTime() - startTime}`);
     const headerMap = {};
     for (let i = 0; i < headers.length; i++) {
@@ -78,22 +45,30 @@ function doGet(e) {
     const postIndex = headerMap["PostCode"];
     const countryIndex = headerMap["Country"];
 
+    console.log(`time to look at headers: ${new Date().getTime() - startTime}`);
+
     // Check if required columns exist
     if (pwIndex === undefined) {
+      console.log('not found');
       return ContentService.createTextOutput(JSON.stringify({
         success: false,
         message: "UUID column not found"
       })).setMimeType(ContentService.MimeType.JSON);
     }
+    console.log(`pwIndex: ${pwIndex}`)
+    const lastRow = sheet.getLastRow();
+    const pwData = sheet.getRange(1,pwIndex + 1, lastRow, 1).getValues();
 
-    const foundRow = rows.find(row => row[pwIndex] === apiKey);
-    
+    console.log(`time to look begin search: ${new Date().getTime() - startTime}`);
+    const foundRow = pwData.findIndex(row => row[0] === apiKey);
+    console.log(`time to end search: ${new Date().getTime() - startTime}`);
+
     if (foundRow) {
+      const data = sheet.getRange(foundRow, 1, 1, lastCol).getValues();
       const endTime = new Date().getTime();
       const executionTime = endTime - startTime;
       
       console.log(`User found | Time: ${executionTime}ms`);
-      
       return ContentService.createTextOutput(JSON.stringify({
         success: true,
         data: {
@@ -109,7 +84,6 @@ function doGet(e) {
           country: foundRow[countryIndex] || ""
         },
         _debug: {
-          cacheStatus: cacheStatus,
           executionTime: executionTime + "ms",
           timestamp: new Date().toISOString()
         }
@@ -118,13 +92,12 @@ function doGet(e) {
 
     const endTime = new Date().getTime();
     const executionTime = endTime - startTime;
-    console.log(`User not found | Cache: ${cacheStatus} | Time: ${executionTime}ms`);
+    console.log(`User not found | Time: ${executionTime}ms`);
 
     return ContentService.createTextOutput(JSON.stringify({
       success: false,
       message: "User not found",
       _debug: {
-        cacheStatus: cacheStatus,
         executionTime: executionTime + "ms"
       }
     })).setMimeType(ContentService.MimeType.JSON);
