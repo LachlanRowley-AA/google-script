@@ -1,36 +1,26 @@
 function doGet(e) {
   try {
-    const sheetID = ""
-    const sheetName = ""
+    const sheetID = "";
+    const sheetName = "";
     const startTime = new Date().getTime();
-    let apiKey;
-    if(!e) {
-      apiKey = 'test';
-    }
-    else {
-      apiKey = e.parameter.accountKey;
-    }    if (!apiKey) {
+
+    let apiKey = (!e || !e.parameter.accountKey) ? 'test' : e.parameter.accountKey;
+
+    if (!apiKey) {
       return ContentService.createTextOutput(JSON.stringify({
         success: false,
         message: "Missing accountKey"
       })).setMimeType(ContentService.MimeType.JSON);
     }
 
-    let data;
-    
-    console.log(`time to load: ${new Date().getTime() - startTime}`);
     const sheet = SpreadsheetApp.openById(sheetID).getSheetByName(sheetName);
-    
-    const lastCol = sheet.getLastColumn();
-    const headers = sheet.getRange(1,1,1,lastCol).getValues().flat();
-    console.log(headers);
-    console.log(`time to look at sheet: ${new Date().getTime() - startTime}`);
+
+    const headers = sheet.getRange("1:1").getValues()[0];
     const headerMap = {};
     for (let i = 0; i < headers.length; i++) {
       headerMap[headers[i]] = i;
     }
 
-    // Get indices using the map
     const pwIndex = headerMap["UUID"];
     const companyIndex = headerMap["CompanyName"];
     const emailIndex = headerMap["Email"];
@@ -45,43 +35,51 @@ function doGet(e) {
     const postIndex = headerMap["PostCode"];
     const countryIndex = headerMap["Country"];
 
-    console.log(`time to look at headers: ${new Date().getTime() - startTime}`);
-
-    // Check if required columns exist
     if (pwIndex === undefined) {
-      console.log('not found');
       return ContentService.createTextOutput(JSON.stringify({
         success: false,
         message: "UUID column not found"
       })).setMimeType(ContentService.MimeType.JSON);
     }
-    console.log(`pwIndex: ${pwIndex}`)
-    const lastRow = sheet.getLastRow();
-    const pwData = sheet.getRange(1,pwIndex + 1, lastRow, 1).getValues();
+
+    const cache = CacheService.getScriptCache();
+    let uuidList = cache.get("uuid_col");
+
+    if (uuidList) {
+      uuidList = JSON.parse(uuidList);
+      console.log("UUID cache HIT");
+    } else {
+      const lastRow = sheet.getLastRow();
+      const uuidRange = sheet.getRange(1, pwIndex + 1, lastRow, 1);
+      uuidList = uuidRange.getValues().flat();
+      cache.put("uuid_col", JSON.stringify(uuidList), 3600); // 5 minutes
+      console.log("UUID cache MISS");
+    }
 
     console.log(`time to look begin search: ${new Date().getTime() - startTime}`);
-    const foundRow = pwData.findIndex(row => row[0] === apiKey);
+    const foundRow = uuidList.findIndex(val => val === apiKey);
     console.log(`time to end search: ${new Date().getTime() - startTime}`);
 
-    if (foundRow) {
-      const data = sheet.getRange(foundRow, 1, 1, lastCol).getValues();
+    if (foundRow !== -1) {
+      const numColumns = headers.length;
+      const data = sheet.getRange(foundRow + 1, 1, 1, numColumns).getValues()[0]; // +1 since rows are 1-based
       const endTime = new Date().getTime();
       const executionTime = endTime - startTime;
-      
-      console.log(`User found | Time: ${executionTime}ms`);
+      console.log(data);
+
       return ContentService.createTextOutput(JSON.stringify({
         success: true,
         data: {
-          company: foundRow[companyIndex] || "",
-          email: foundRow[emailIndex] || "",
-          balance: foundRow[balanceIndex] || "",
-          phoneNumber: foundRow[phoneIndex] || "",
-          name: (foundRow[firstNameIndex] + " " + foundRow[lastNameIndex]).trim() || foundRow[contactIndex],
-          street: foundRow[streetIndex] || "",
-          city: foundRow[cityIndex] || "",
-          state: foundRow[stateIndex] || "",
-          postCode: foundRow[postIndex] || "",
-          country: foundRow[countryIndex] || ""
+          company: data[companyIndex] || "",
+          email: data[emailIndex] || "",
+          balance: data[balanceIndex] || "",
+          phoneNumber: data[phoneIndex] || "",
+          name: (data[firstNameIndex] + " " + data[lastNameIndex]).trim() || data[contactIndex],
+          street: data[streetIndex] || "",
+          city: data[cityIndex] || "",
+          state: data[stateIndex] || "",
+          postCode: data[postIndex] || "",
+          country: data[countryIndex] || ""
         },
         _debug: {
           executionTime: executionTime + "ms",
@@ -92,8 +90,6 @@ function doGet(e) {
 
     const endTime = new Date().getTime();
     const executionTime = endTime - startTime;
-    console.log(`User not found | Time: ${executionTime}ms`);
-
     return ContentService.createTextOutput(JSON.stringify({
       success: false,
       message: "User not found",
